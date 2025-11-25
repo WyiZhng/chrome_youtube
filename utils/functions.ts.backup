@@ -1,0 +1,618 @@
+// Regex to parse the player response from the page (when transcript is not available on the window)
+const YT_INITIAL_PLAYER_RESPONSE_RE =
+  /ytInitialPlayerResponse\s*=\s*({.+?})\s*;\s*(?:var\s+(?:meta|head)|<\/script|\n)/
+
+/**
+ * Comparison function used to sort tracks by priority
+ */
+function compareTracks(track1, track2) {
+  const langCode1 = track1.languageCode
+  const langCode2 = track2.languageCode
+
+  if (langCode1 === "en" && langCode2 !== "en") {
+    return -1 // English comes first
+  } else if (langCode1 !== "en" && langCode2 === "en") {
+    return 1 // English comes first
+  } else if (track1.kind !== "asr" && track2.kind === "asr") {
+    return -1 // Non-ASR comes first
+  } else if (track1.kind === "asr" && track2.kind !== "asr") {
+    return 1 // Non-ASR comes first
+  }
+
+  return 0 // Preserve order if both have same priority
+}
+
+/**
+ * Inject script into page context to read ytInitialPlayerResponse
+ * This is necessary because content scripts run in an isolated environment
+ * and cannot directly access page variables
+ */
+function injectPageScript(): Promise<any> {
+  return new Promise((resolve, reject) => {
+    const messageId = `youtube-data-${Date.now()}`
+    
+    const messageHandler = (event: MessageEvent) => {
+      if (event.source !== window) return
+      if (event.data?.messageId === messageId) {
+        window.removeEventListener("message", messageHandler)
+        if (event.data.error) {
+          reject(new Error(event.data.error))
+        } else {
+          resolve(event.data.playerResponse)
+        }
+      }
+    }
+    
+    window.addEventListener("message", messageHandler)
+    
+    const script = document.createElement("script")
+    script.textContent = `
+      (function() {
+        try {
+          const playerResponse = window.ytInitialPlayerResponse;
+          if (!playerResponse) {
+            window.postMessage({
+              messageId: "${messageId}",
+              error: "ytInitialPlayerResponse not found"
+            }, "*");
+            return;
+          }
+          
+          window.postMessage({
+            messageId: "${messageId}",
+            playerResponse: playerResponse
+          }, "*");
+        } catch (e) {
+          window.postMessage({
+            messageId: "${messageId}",
+            error: e.message
+          }, "*");
+        }
+      })();
+    `
+    document.documentElement.appendChild(script)
+    script.remove()
+    
+    // Timeout after 5 seconds
+    setTimeout(() => {
+      window.removeEventListener("message", messageHandler)
+      reject(new Error("Timeout waiting for player response"))
+    }, 5000)
+  })
+}
+
+export async function getVideoData(id: string) {
+  console.log("🔍 Getting video data for:", id)
+  
+  try {
+    // Inject script to read ytInitialPlayerResponse from page context
+    console.log("💉 Injecting script to read player data from page context...")
+    const player = await injectPageScript()
+    console.log("✅ Got player response from page context")
+
+    if (!player || !player.videoDetails) {
+      console.error("❌ Invalid player data")
+      return {
+        metadata: {
+          title: "Error: Could not load video data",
+          duration: "0",
+          author: "Unknown",
+          views: "0"
+        },
+        transcript: null
+      }
+    }
+
+    // Extract metadata
+    const metadata = {
+      title: player.videoDetails.title,
+      duration: player.videoDetails.lengthSeconds,
+      author: player.videoDetails.author,
+      views: player.videoDetails.viewCount
+    }
+
+    console.log("📝 Metadata:", metadata)
+    console.log("🎤 Captions available:", !!player.captions)
+    console.log("🎤 Caption tracks:", player.captions?.playerCaptionsTracklistRenderer?.captionTracks?.length || 0)
+
+    // Check if captions are available
+    if (!player.captions || !player.captions.playerCaptionsTracklistRenderer) {
+      console.warn("⚠️ No captions found for this video")
+      return { metadata, transcript: null }
+    }
+
+    const tracks = player.captions.playerCaptionsTracklistRenderer.captionTracks
+    if (!tracks || tracks.length === 0) {
+      console.warn("⚠️ No caption tracks available")
+      return { metadata, transcript: null }
+    }
+
+    console.log("📜 Found", tracks.length, "caption track(s)")
+    console.log("📜 Track details:", tracks.map(t => ({ 
+      lang: t.languageCode, 
+      name: t.name?.simpleText, 
+      kind: t.kind 
+    })))
+    
+    // Sort tracks by priority (English, non-ASR first)
+    tracks.sort(compareTracks)
+    const selectedTrack = tracks[0]
+    
+    console.log("✅ Selected track:", {
+      lang: selectedTrack.languageCode,
+      name: selectedTrack.name?.simpleText,
+      kind: selectedTrack.kind
+    })
+
+    // Fetch transcript from the track's baseUrl
+    try {
+      // Add fmt=json3 to get JSON format instead of XML
+      const transcriptUrl = selectedTrack.baseUrl + "&fmt=json3"
+      console.log("🔗 Fetching transcript from:", transcriptUrl.substring(0, 100) + "...")
+      
+      const response = await fetch(transcriptUrl)
+      console.log("📥 Response status:", response.status)
+      
+      if (!response.ok) {
+        console.error("❌ Failed to fetch transcript, status:", response.status)
+        return { metadata, transcript: null }
+      }
+      
+      const text = await response.text()
+      console.log("📄 Response length:", text.length)
+      
+      if (text && text.length > 0) {
+        console.log("📄 Response preview:", text.substring(0, 200))
+      }
+      
+      if (!text || text.length === 0) {
+        console.error("❌ Empty transcript response")
+        
+        // Try XML format as fallback
+        console.log("🔄 Trying XML format as fallback...")
+        const xmlUrl = selectedTrack.baseUrl
+        const xmlResponse = await fetch(xmlUrl)
+        
+        if (xmlResponse.ok) {
+          const xmlText = await xmlResponse.text()
+          console.log("📄 XML response length:", xmlText.length)
+          
+          if (xmlText && xmlText.length > 0) {
+            // Parse XML
+            const parser = new DOMParser()
+            const xmlDoc = parser.parseFromString(xmlText, "text/xml")
+            const textElements = xmlDoc.getElementsByTagName('text')
+            
+            console.log("📊 XML text elements found:", textElements.length)
+            
+            if (textElements.length > 0) {
+              const events = []
+              
+              for (let i = 0; i < textElements.length; i++) {
+                const element = textElements[i]
+                const start = parseFloat(element.getAttribute('start') || '0')
+                const duration = parseFloat(element.getAttribute('dur') || '0')
+                const text = element.textContent || ''
+                
+                if (text.trim()) {
+                  events.push({
+                    tStartMs: Math.floor(start * 1000),
+                    dDurationMs: Math.floor(duration * 1000),
+                    segs: [{ utf8: text.trim() }]
+                  })
+                }
+              }
+              
+              if (events.length > 0) {
+                console.log("✅ Successfully parsed XML transcript")
+                console.log("📊 Total events:", events.length)
+                return { metadata, transcript: { events } }
+              }
+            }
+          }
+        }
+        
+        return { metadata, transcript: null }
+      }
+      
+      // Parse JSON3 format
+      try {
+        const transcript = JSON.parse(text)
+        
+        if (!transcript.events || !Array.isArray(transcript.events)) {
+          console.error("❌ Invalid transcript format - no events array")
+          return { metadata, transcript: null }
+        }
+        
+        console.log("✅ Successfully parsed transcript")
+        console.log("📊 Total events:", transcript.events.length)
+        
+        if (transcript.events.length > 0) {
+          console.log("📊 First event:", transcript.events[0])
+        }
+        
+        return { metadata, transcript }
+        
+      } catch (parseError) {
+        console.error("❌ Failed to parse transcript JSON:", parseError.message)
+        return { metadata, transcript: null }
+      }
+      
+    } catch (fetchError) {
+      console.error("❌ Error fetching transcript:", fetchError.message)
+      return { metadata, transcript: null }
+    }
+    
+  } catch (error) {
+    console.error("❌ Error in getVideoData:", error.message)
+    console.error("Stack trace:", error.stack)
+    
+    return {
+      metadata: {
+        title: "Error loading video",
+        duration: "0",
+        author: "Unknown",
+        views: "0"
+      },
+      transcript: null
+    }
+  }
+}
+
+export function cleanJsonTranscript(transcript) {
+      console.log("🌐 Fetching video data from YouTube...")
+      
+      try {
+        const pageData = await fetch(`https://www.youtube.com/watch?v=${id}`)
+        
+        if (!pageData.ok) {
+          console.error("❌ Failed to fetch YouTube page, status:", pageData.status)
+          throw new Error(`HTTP ${pageData.status}`)
+        }
+        
+        const body = await pageData.text()
+        console.log("📄 Page HTML length:", body.length)
+        
+        const playerResponseMatch = body.match(YT_INITIAL_PLAYER_RESPONSE_RE)
+        
+        if (!playerResponseMatch) {
+          console.error("❌ Unable to parse playerResponse from page")
+          console.log("🔍 Trying alternative regex patterns...")
+          
+          // Try alternative pattern
+          const altPattern = /var ytInitialPlayerResponse = ({.+?});/
+          const altMatch = body.match(altPattern)
+          
+          if (altMatch) {
+            console.log("✅ Found player data with alternative pattern")
+            player = JSON.parse(altMatch[1])
+          } else {
+            console.error("❌ No player data found in page")
+            // Return structure with null transcript instead of undefined
+            return {
+              metadata: {
+                title: "Unable to load video data",
+                duration: "0",
+                author: "Unknown",
+                views: "0"
+              },
+              transcript: null
+            }
+          }
+        } else {
+          player = JSON.parse(playerResponseMatch[1])
+          console.log("✅ Player data parsed from page")
+        }
+      } catch (fetchError) {
+        console.error("❌ Error fetching page:", fetchError)
+        return {
+          metadata: {
+            title: "Error fetching video",
+            duration: "0",
+            author: "Unknown",
+            views: "0"
+          },
+          transcript: null
+        }
+      }
+    }
+
+    const metadata = {
+      title: player.videoDetails.title,
+      duration: player.videoDetails.lengthSeconds,
+      author: player.videoDetails.author,
+      views: player.videoDetails.viewCount
+    }
+
+    console.log("📝 Metadata:", metadata)
+    console.log("🎤 Captions available:", !!player.captions)
+    console.log("🎤 Caption tracks:", player.captions?.playerCaptionsTracklistRenderer?.captionTracks?.length || 0)
+
+    if (player.captions && player.captions.playerCaptionsTracklistRenderer) {
+      const tracks = player.captions.playerCaptionsTracklistRenderer.captionTracks
+      if (tracks && tracks.length > 0) {
+        console.log("📜 Found", tracks.length, "caption track(s)")
+        console.log("📜 Track details:", tracks.map(t => ({ 
+          lang: t.languageCode, 
+          name: t.name?.simpleText, 
+          kind: t.kind 
+        })))
+        
+        tracks.sort(compareTracks)
+        const selectedTrack = tracks[0]
+        console.log("✅ Selected track:", {
+          lang: selectedTrack.languageCode,
+          name: selectedTrack.name?.simpleText,
+          kind: selectedTrack.kind,
+          baseUrl: selectedTrack.baseUrl
+        })
+        
+        try {
+          // Try multiple direct fetch methods with different formats
+          const videoId = id
+          const lang = selectedTrack.languageCode || 'en'
+          let transcript = null
+          
+          // Method 1: Try srv3 format (most compatible)
+          console.log("🔗 Method 1: Trying srv3 format...")
+          try {
+            const srv3Url = `https://www.youtube.com/api/timedtext?v=${videoId}&lang=${lang}&fmt=srv3`
+            console.log("🔗 URL:", srv3Url)
+            
+            const srv3Response = await fetch(srv3Url)
+            console.log("📥 srv3 status:", srv3Response.status)
+            
+            if (srv3Response.ok) {
+              const srv3Text = await srv3Response.text()
+              console.log("📄 srv3 length:", srv3Text.length)
+              console.log("📄 srv3 preview:", srv3Text.substring(0, 200))
+              
+              if (srv3Text && srv3Text.length > 0) {
+                // srv3 is XML format
+                const parser = new DOMParser()
+                const xmlDoc = parser.parseFromString(srv3Text, "text/xml")
+                const textElements = xmlDoc.getElementsByTagName('text')
+                
+                if (textElements.length > 0) {
+                  const events = []
+                  for (let i = 0; i < textElements.length; i++) {
+                    const element = textElements[i]
+                    const start = parseFloat(element.getAttribute('start') || '0')
+                    const duration = parseFloat(element.getAttribute('dur') || '0')
+                    const text = element.textContent || ''
+                    
+                    if (text.trim()) {
+                      events.push({
+                        tStartMs: Math.floor(start * 1000),
+                        dDurationMs: Math.floor(duration * 1000),
+                        segs: [{ utf8: text.trim() }]
+                      })
+                    }
+                  }
+                  
+                  if (events.length > 0) {
+                    transcript = { events }
+                    console.log("✅ srv3 format successful! Events:", events.length)
+                  }
+                }
+              }
+            }
+          } catch (error) {
+            console.warn("⚠️ srv3 method failed:", error.message)
+          }
+          
+          // Method 2: Try original baseUrl (no format specified)
+          if (!transcript) {
+            console.log("🔗 Method 2: Trying original baseUrl...")
+            try {
+              const baseUrl = selectedTrack.baseUrl
+              console.log("🔗 URL:", baseUrl.substring(0, 100) + "...")
+              
+              const baseResponse = await fetch(baseUrl)
+              console.log("📥 baseUrl status:", baseResponse.status)
+              
+              if (baseResponse.ok) {
+                const baseText = await baseResponse.text()
+                console.log("📄 baseUrl length:", baseText.length)
+                console.log("📄 baseUrl preview:", baseText.substring(0, 200))
+                
+                if (baseText && baseText.length > 0) {
+                  const parser = new DOMParser()
+                  const xmlDoc = parser.parseFromString(baseText, "text/xml")
+                  const textElements = xmlDoc.getElementsByTagName('text')
+                  
+                  if (textElements.length > 0) {
+                    const events = []
+                    for (let i = 0; i < textElements.length; i++) {
+                      const element = textElements[i]
+                      const start = parseFloat(element.getAttribute('start') || '0')
+                      const duration = parseFloat(element.getAttribute('dur') || '0')
+                      const text = element.textContent || ''
+                      
+                      if (text.trim()) {
+                        events.push({
+                          tStartMs: Math.floor(start * 1000),
+                          dDurationMs: Math.floor(duration * 1000),
+                          segs: [{ utf8: text.trim() }]
+                        })
+                      }
+                    }
+                    
+                    if (events.length > 0) {
+                      transcript = { events }
+                      console.log("✅ baseUrl successful! Events:", events.length)
+                    }
+                  }
+                }
+              }
+            } catch (error) {
+              console.warn("⚠️ baseUrl method failed:", error.message)
+            }
+          }
+          
+          // Method 3: Try vtt format
+          if (!transcript) {
+            console.log("🔗 Method 3: Trying vtt format...")
+            try {
+              const vttUrl = `https://www.youtube.com/api/timedtext?v=${videoId}&lang=${lang}&fmt=vtt`
+              console.log("🔗 URL:", vttUrl)
+              
+              const vttResponse = await fetch(vttUrl)
+              console.log("📥 vtt status:", vttResponse.status)
+              
+              if (vttResponse.ok) {
+                const vttText = await vttResponse.text()
+                console.log("📄 vtt length:", vttText.length)
+                console.log("📄 vtt preview:", vttText.substring(0, 200))
+                
+                if (vttText && vttText.length > 0 && vttText.includes('WEBVTT')) {
+                  // Parse VTT format
+                  const lines = vttText.split('\n')
+                  const events = []
+                  let currentTime = null
+                  
+                  for (let i = 0; i < lines.length; i++) {
+                    const line = lines[i].trim()
+                    
+                    // Match timestamp line (e.g., "00:00:00.000 --> 00:00:03.000")
+                    if (line.includes('-->')) {
+                      const times = line.split('-->').map(t => t.trim())
+                      const startParts = times[0].split(':')
+                      const startMs = (
+                        parseInt(startParts[0]) * 3600000 +
+                        parseInt(startParts[1]) * 60000 +
+                        parseFloat(startParts[2]) * 1000
+                      )
+                      currentTime = startMs
+                    } else if (line && currentTime !== null && !line.match(/^\d+$/)) {
+                      // This is caption text
+                      events.push({
+                        tStartMs: Math.floor(currentTime),
+                        dDurationMs: 3000,
+                        segs: [{ utf8: line }]
+                      })
+                      currentTime = null
+                    }
+                  }
+                  
+                  if (events.length > 0) {
+                    transcript = { events }
+                    console.log("✅ vtt format successful! Events:", events.length)
+                  }
+                }
+              }
+            } catch (error) {
+              console.warn("⚠️ vtt method failed:", error.message)
+            }
+          }
+          
+          if (transcript) {
+            console.log("🎉 Successfully fetched transcript!")
+            return { metadata, transcript }
+          } else {
+            console.error("❌ All transcript fetching methods failed")
+            return { metadata, transcript: null }
+          }
+          
+        } catch (transcriptError) {
+          console.error("❌ Error fetching transcript:", transcriptError)
+          console.error("Error details:", {
+            message: transcriptError.message,
+            name: transcriptError.name,
+            stack: transcriptError.stack
+          })
+          return { metadata, transcript: null }
+        }
+      }
+    }
+    
+    console.warn("⚠️ No captions found for this video")
+    return { metadata, transcript: null }
+    
+  } catch (error) {
+    console.error("❌ Error in getVideoData:", error)
+    // Return safe fallback structure
+    return {
+      metadata: {
+        title: "Error loading video",
+        duration: "0",
+        author: "Unknown",
+        views: "0"
+      },
+      transcript: null
+    }
+  }
+}
+
+export function cleanJsonTranscript(transcript) {
+  const chunks = []
+  let currentChunk = ""
+  let currentStartTime = transcript.events[0].tStartMs
+  let currentEndTime = currentStartTime
+
+  transcript.events.forEach((event) => {
+    event.segs?.forEach((seg) => {
+      const segmentText = seg.utf8.replace(/\n/g, " ")
+      currentEndTime = event.tStartMs + (seg.tOffsetMs || 0)
+      if ((currentChunk + segmentText).length > 300) {
+        chunks.push({
+          text: currentChunk.trim(),
+          startTime: currentStartTime,
+          endTime: currentEndTime
+        })
+        currentChunk = segmentText
+        currentStartTime = currentEndTime
+      } else {
+        currentChunk += segmentText
+      }
+    })
+  })
+
+  if (currentChunk) {
+    chunks.push({
+      text: currentChunk.trim(),
+      startTime: currentStartTime,
+      endTime: currentEndTime
+    })
+  }
+
+  return chunks
+}
+
+export function cleanTextTranscript(transcript) {
+  // Initialize variables to hold lines of text and temporary segment text
+  let textLines = []
+  let tempText = ""
+  let lastTime = 0
+
+  // Loop through the events array
+  transcript.events.forEach((event) => {
+    // Check if the event has segments and process them
+    if (event.segs) {
+      event.segs.forEach((seg) => {
+        // Calculate the segment's start time in milliseconds
+        const segmentStartTimeMs = event.tStartMs + (seg.tOffsetMs || 0)
+
+        // If there's a significant time gap or it's a new line, output the accumulated text
+        if (tempText && (segmentStartTimeMs - lastTime > 1000 || seg.utf8 === "\n")) {
+          const timeFormatted = new Date(lastTime).toISOString().substr(11, 12)
+          textLines.push(`${timeFormatted}: ${tempText.trim()}`)
+          tempText = ""
+        }
+
+        // Update last time and append segment text to temporary text
+        lastTime = segmentStartTimeMs
+        tempText += seg.utf8
+      })
+    }
+  })
+
+  // Append the last accumulated segment if any remains
+  if (tempText) {
+    const timeFormatted = new Date(lastTime).toISOString().substr(11, 12)
+    textLines.push(`${timeFormatted}: ${tempText.trim()}`)
+  }
+
+  // Join all lines into a single string separated by new lines
+  return textLines.join("\n")
+}
