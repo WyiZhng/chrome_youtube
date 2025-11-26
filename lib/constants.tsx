@@ -107,21 +107,21 @@ export const models: Model[] = [
     icon: <IconOpenAI className="h-4 w-4 opacity-70" />
   },
   {
-    value: "qwen-plus",
-    label: "Qwen Plus (通义千问)",
-    content: "qwen-plus",
+    value: "qwen3-max",
+    label: "Qwen 3 Max (通义千问)",
+    content: "qwen3-max",
     icon: <IconOpenAI className="h-4 w-4 opacity-70" />
   },
   {
-    value: "qwen-turbo",
-    label: "Qwen Turbo (通义千问)",
-    content: "qwen-turbo",
+    value: "deepseek-v3",
+    label: "DeepSeek V3",
+    content: "deepseek-v3",
     icon: <IconOpenAI className="h-4 w-4 opacity-70" />
   },
   {
-    value: "qwen-max",
-    label: "Qwen Max (通义千问)",
-    content: "qwen-max",
+    value: "kimi-k2",
+    label: "Kimi K2",
+    content: "kimi-k2",
     icon: <IconOpenAI className="h-4 w-4 opacity-70" />
   }
 ]

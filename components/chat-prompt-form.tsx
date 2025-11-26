@@ -94,26 +94,52 @@ export default function PromptForm({ className }: PromptFormProps) {
 
   React.useEffect(() => {
     console.log("Use Effect That Generates Chat Called")
+    console.log("Port data:", port.data)
 
-    if (port.data?.message !== undefined && port.data.isEnd === false) {
-      console.log("Return port.data.message")
-      console.log(port.data.message)
-      // if previous message is user message, then add new assistant message with no content, else get the last assistant message and update the content
-      if (chatMessages[chatMessages.length - 1].role === "user") {
-        setChatMessages([
-          ...chatMessages,
-          {
-            role: "assistant",
-            content: ""
-          }
-        ])
-      } else {
-        const newMessages = [...chatMessages]
-        newMessages[newMessages.length - 1].content = port.data.message
-        setChatMessages(newMessages)
+    if (port.data?.message !== undefined) {
+      // 处理非流式响应（isEnd=true）
+      if (port.data.isEnd === true) {
+        console.log("Received final chat message (non-streaming):", port.data.message)
+        
+        // 移除末尾的 "END" 标记
+        const content = port.data.message.replace(/\nEND$/, '').replace(/END$/, '')
+        
+        // 如果最后一条是用户消息，添加新的助手消息
+        if (chatMessages[chatMessages.length - 1].role === "user") {
+          setChatMessages([
+            ...chatMessages,
+            {
+              role: "assistant",
+              content: content
+            }
+          ])
+        } else {
+          // 否则更新最后一条助手消息
+          const newMessages = [...chatMessages]
+          newMessages[newMessages.length - 1].content = content
+          setChatMessages(newMessages)
+        }
+        
+        setChatIsGenerating(false)
+      } 
+      // 处理流式响应（isEnd=false）
+      else if (port.data.isEnd === false) {
+        console.log("Streaming chat message:", port.data.message)
+        
+        if (chatMessages[chatMessages.length - 1].role === "user") {
+          setChatMessages([
+            ...chatMessages,
+            {
+              role: "assistant",
+              content: port.data.message
+            }
+          ])
+        } else {
+          const newMessages = [...chatMessages]
+          newMessages[newMessages.length - 1].content = port.data.message
+          setChatMessages(newMessages)
+        }
       }
-    } else {
-      setChatIsGenerating(false)
     }
 
     setChatIsError(false)

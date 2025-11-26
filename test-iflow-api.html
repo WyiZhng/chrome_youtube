@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>iFlow API 测试工具</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        
+        .container {
+            background: white;
+            border-radius: 16px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            max-width: 800px;
+            width: 100%;
+            padding: 40px;
+        }
+        
+        h1 {
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 28px;
+        }
+        
+        .subtitle {
+            color: #666;
+            margin-bottom: 30px;
+            font-size: 14px;
+        }
+        
+        .form-group {
+            margin-bottom: 20px;
+        }
+        
+        label {
+            display: block;
+            margin-bottom: 8px;
+            color: #444;
+            font-weight: 600;
+            font-size: 14px;
+        }
+        
+        input, select, textarea {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 14px;
+            transition: border-color 0.3s;
+        }
+        
+        input:focus, select:focus, textarea:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        
+        textarea {
+            resize: vertical;
+            min-height: 100px;
+            font-family: inherit;
+        }
+        
+        button {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 14px 32px;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+            width: 100%;
+        }
+        
+        button:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(102, 126, 234, 0.4);
+        }
+        
+        button:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+        
+        .result-box {
+            margin-top: 30px;
+            padding: 20px;
+            border-radius: 8px;
+            background: #f8f9fa;
+            border-left: 4px solid #667eea;
+            display: none;
+        }
+        
+        .result-box.show {
+            display: block;
+        }
+        
+        .result-box.error {
+            background: #fff5f5;
+            border-left-color: #e53e3e;
+        }
+        
+        .result-box.success {
+            background: #f0fdf4;
+            border-left-color: #10b981;
+        }
+        
+        .result-title {
+            font-weight: 600;
+            margin-bottom: 10px;
+            color: #333;
+        }
+        
+        .result-content {
+            white-space: pre-wrap;
+            word-break: break-word;
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+            color: #555;
+            line-height: 1.6;
+        }
+        
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid rgba(255,255,255,.3);
+            border-radius: 50%;
+            border-top-color: white;
+            animation: spin 1s ease-in-out infinite;
+        }
+        
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        
+        .info-box {
+            background: #eff6ff;
+            border: 1px solid #bfdbfe;
+            border-radius: 8px;
+            padding: 12px;
+            margin-bottom: 20px;
+            font-size: 13px;
+            color: #1e40af;
+        }
+        
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 10px;
+            margin-top: 15px;
+        }
+        
+        .stat-item {
+            background: white;
+            padding: 10px;
+            border-radius: 6px;
+            text-align: center;
+        }
+        
+        .stat-label {
+            font-size: 12px;
+            color: #666;
+            margin-bottom: 4px;
+        }
+        
+        .stat-value {
+            font-size: 18px;
+            font-weight: 700;
+            color: #667eea;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🧪 iFlow API 测试工具</h1>
+        <p class="subtitle">测试你的 iFlow API Key 是否可以正常调用</p>
+        
+        <div class="info-box">
+            ℹ️ 此测试将直接调用 <strong>https://apis.iflow.cn/v1/chat/completions</strong> 接口，验证 API Key 和模型是否正常工作。
+        </div>
+        
+        <div class="form-group">
+            <label for="apiKey">API Key *</label>
+            <input 
+                type="password" 
+                id="apiKey" 
+                placeholder="输入你的 iFlow API Key (sk-...)"
+                required
+            />
+        </div>
+        
+        <div class="form-group">
+            <label for="model">选择模型 *</label>
+            <select id="model">
+                <option value="qwen3-max">qwen3-max (通义千问)</option>
+                <option value="deepseek-v3">deepseek-v3 (DeepSeek)</option>
+                <option value="kimi-k2">kimi-k2 (Kimi)</option>
+            </select>
+        </div>
+        
+        <div class="form-group">
+            <label for="message">测试消息 *</label>
+            <textarea 
+                id="message" 
+                placeholder="输入要测试的消息，例如：你好，请介绍一下你自己"
+            >你好，请用一句话介绍你自己</textarea>
+        </div>
+        
+        <button id="testBtn" onclick="testAPI()">
+            🚀 开始测试
+        </button>
+        
+        <div id="resultBox" class="result-box">
+            <div class="result-title" id="resultTitle">测试结果</div>
+            <div class="result-content" id="resultContent"></div>
+            <div class="stats" id="stats"></div>
+        </div>
+    </div>
+
+    <script>
+        let startTime = 0;
+        
+        async function testAPI() {
+            const apiKey = document.getElementById('apiKey').value.trim();
+            const model = document.getElementById('model').value;
+            const message = document.getElementById('message').value.trim();
+            const resultBox = document.getElementById('resultBox');
+            const resultTitle = document.getElementById('resultTitle');
+            const resultContent = document.getElementById('resultContent');
+            const statsDiv = document.getElementById('stats');
+            const testBtn = document.getElementById('testBtn');
+            
+            // 验证输入
+            if (!apiKey) {
+                alert('❌ 请输入 API Key！');
+                return;
+            }
+            
+            if (!message) {
+                alert('❌ 请输入测试消息！');
+                return;
+            }
+            
+            // 显示加载状态
+            testBtn.disabled = true;
+            testBtn.innerHTML = '<span class="loading"></span> 测试中...';
+            resultBox.className = 'result-box show';
+            resultBox.classList.remove('error', 'success');
+            resultTitle.textContent = '⏳ 正在测试...';
+            resultContent.textContent = '正在向 iFlow API 发送请求...';
+            statsDiv.innerHTML = '';
+            
+            startTime = Date.now();
+            
+            try {
+                console.log('📤 发送请求到 iFlow API...');
+                console.log('模型:', model);
+                console.log('消息:', message);
+                
+                const response = await fetch('https://apis.iflow.cn/v1/chat/completions', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${apiKey}`
+                    },
+                    body: JSON.stringify({
+                        model: model,
+                        messages: [
+                            {
+                                role: 'user',
+                                content: message
+                            }
+                        ],
+                        stream: false,
+                        max_tokens: 4096,
+                        temperature: 0.7
+                    })
+                });
+                
+                const endTime = Date.now();
+                const duration = endTime - startTime;
+                
+                console.log('📥 收到响应，状态码:', response.status);
+                
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    console.error('❌ API 错误:', errorText);
+                    
+                    let errorMessage = `HTTP ${response.status}: ${response.statusText}\n\n`;
+                    
+                    try {
+                        const errorJson = JSON.parse(errorText);
+                        errorMessage += JSON.stringify(errorJson, null, 2);
+                    } catch {
+                        errorMessage += errorText;
+                    }
+                    
+                    throw new Error(errorMessage);
+                }
+                
+                const data = await response.json();
+                console.log('✅ API 响应成功:', data);
+                
+                // 提取回复内容
+                const reply = data.choices?.[0]?.message?.content || '(无返回内容)';
+                
+                // 显示成功结果
+                resultBox.classList.add('success');
+                resultTitle.textContent = '✅ 测试成功！';
+                resultContent.textContent = `模型回复:\n${reply}\n\n完整响应:\n${JSON.stringify(data, null, 2)}`;
+                
+                // 显示统计信息
+                statsDiv.innerHTML = `
+                    <div class="stat-item">
+                        <div class="stat-label">响应时间</div>
+                        <div class="stat-value">${duration}ms</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-label">使用模型</div>
+                        <div class="stat-value">${model}</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-label">Token 消耗</div>
+                        <div class="stat-value">${data.usage?.total_tokens || 'N/A'}</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-label">状态码</div>
+                        <div class="stat-value">${response.status}</div>
+                    </div>
+                `;
+                
+            } catch (error) {
+                console.error('❌ 测试失败:', error);
+                
+                // 显示错误结果
+                resultBox.classList.add('error');
+                resultTitle.textContent = '❌ 测试失败';
+                resultContent.textContent = `错误信息:\n${error.message}\n\n请检查:\n1. API Key 是否正确\n2. API Key 是否有足够余额\n3. 网络连接是否正常\n4. 所选模型是否可用`;
+                
+                const duration = Date.now() - startTime;
+                statsDiv.innerHTML = `
+                    <div class="stat-item">
+                        <div class="stat-label">失败时间</div>
+                        <div class="stat-value">${duration}ms</div>
+                    </div>
+                `;
+            } finally {
+                // 恢复按钮
+                testBtn.disabled = false;
+                testBtn.innerHTML = '🚀 开始测试';
+            }
+        }
+        
+        // 支持回车键提交
+        document.getElementById('message').addEventListener('keydown', function(e) {
+            if (e.key === 'Enter' && e.ctrlKey) {
+                testAPI();
+            }
+        });
+    </script>
+</body>
+</html>

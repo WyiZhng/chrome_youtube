@@ -6,7 +6,7 @@ import { useExtension } from "@/contexts/extension-context"
 import SummarySkeleton from "./summary-skeleton"
 
 export default function SummaryContent() {
-  const { summaryIsGenerating, summaryContent, summaryIsError, generateSummary } = useSummary()
+  const { summaryIsGenerating, summaryContent, summaryIsError, summaryErrorMessage, generateSummary } = useSummary()
   const { extensionData, extensionLoading } = useExtension()
 
   // Check if transcript data is available
@@ -16,7 +16,7 @@ export default function SummaryContent() {
     return (
       <div className="flex flex-col justify-center items-center w-full p-6 bg-white dark:bg-[#0f0f0f] space-y-3">
         <div className="text-red-500 dark:text-red-400 text-sm text-center">
-          ❌ Failed to generate summary. Please check your API key and try again.
+          ❌ {summaryErrorMessage || "Failed to generate summary. Please check your API key and try again."}
         </div>
         <Button variant="outline" className="w-full h-12" onClick={generateSummary} disabled={!hasTranscript}>
           <span className="text-sm">Retry</span>

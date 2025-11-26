@@ -5,12 +5,12 @@ export const createLlm = (apiKey: string, model?: string) => {
     throw new Error("API key is required. Please add your API key in the extension settings.")
   }
 
-  // Check if using Qwen models
-  const isQwen = model?.startsWith('qwen')
+  // Check if using Custom models (Qwen, DeepSeek, Kimi)
+  const isCustomModel = model?.startsWith('qwen') || model?.startsWith('deepseek') || model?.startsWith('kimi')
   
   return new OpenAI({
     apiKey: apiKey.trim(),
-    baseURL: isQwen ? 'https://apis.iflow.cn/v1' : undefined,
+    baseURL: isCustomModel ? 'https://apis.iflow.cn/v1' : undefined,
     dangerouslyAllowBrowser: true
   })
 }

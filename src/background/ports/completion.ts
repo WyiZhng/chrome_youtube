@@ -30,7 +30,7 @@ async function createCompletion(model: string, prompt: string, context: any): Pr
   }
 
   const llm = createLlm(context.openAIKey, model)
-  const isQwenModel = model?.startsWith("qwen")
+  const isCustomModel = model?.startsWith("qwen") || model?.startsWith("deepseek") || model?.startsWith("kimi")
 
   console.log("Creating Completion with model:", model)
 
@@ -46,12 +46,27 @@ async function createCompletion(model: string, prompt: string, context: any): Pr
   console.log("User Prompt")
   console.log(USER)
 
-  if (isQwenModel) {
-    console.log("Using non-streaming mode for Qwen model")
+  if (isCustomModel) {
+    console.log("Using non-streaming mode for Custom model")
+    console.log("API Request to iFlow:", {
+      baseURL: "https://apis.iflow.cn/v1",
+      model: model || "qwen3-max",
+      messageLength: USER.length,
+      hasApiKey: !!context.openAIKey
+    })
+    
     const completion = await llm.chat.completions.create({
       messages: [{ role: "user", content: USER }],
-      model: model || "qwen-plus",
-      stream: false
+      model: model || "qwen3-max",
+      stream: false,
+      max_tokens: 4096,
+      temperature: 0.7
+    })
+    
+    console.log("iFlow API Response:", {
+      hasChoices: !!completion.choices,
+      choicesCount: completion.choices?.length,
+      firstChoice: completion.choices?.[0]
     })
 
     const content =
@@ -82,32 +97,55 @@ const handler: PlasmoMessaging.PortHandler = async (req, res) => {
   const model = req.body.model
   const context = req.body.context
 
+  console.log("=== COMPLETION PORT DEBUG ===")
   console.log("Prompt:", prompt)
   console.log("Model:", model)
   console.log("Context keys:", Object.keys(context || {}))
   console.log("Has OpenAI Key:", !!context?.openAIKey)
+  console.log("API Key (first 10 chars):", context?.openAIKey?.substring(0, 10))
+  console.log("Has Transcript:", !!context?.transcript)
+  console.log("Transcript events count:", context?.transcript?.events?.length)
+  console.log("=============================")
+
+  const safeSend = (data: any) => {
+    try {
+      res.send(data)
+    } catch (error) {
+      console.warn("Failed to send message to port (likely disconnected):", error)
+    }
+  }
 
   try {
     const completion = await createCompletion(model, prompt, context)
 
     if (completion.mode === "standard") {
-      res.send({ message: completion.content, error: "", isEnd: false })
-      res.send({ message: "END", error: "", isEnd: true })
+      // 对于非流式响应(Qwen),一次性发送完整内容和结束标记
+      safeSend({ 
+        message: completion.content + "\nEND", 
+        error: "", 
+        isEnd: true 
+      })
       return
     }
 
     completion.stream.on("content", (delta, snapshot) => {
       cumulativeDelta += delta
-      res.send({ message: cumulativeDelta, error: "", isEnd: false })
+      safeSend({ message: cumulativeDelta, error: "", isEnd: false })
     })
 
     completion.stream.on("end", () => {
-      res.send({ message: "END", error: "", isEnd: true })
+      safeSend({ message: "END", error: "", isEnd: true })
     })
   } catch (error) {
-    console.error("Completion error:", error)
+    console.error("=== COMPLETION ERROR ===")
+    console.error("Error type:", error?.constructor?.name)
+    console.error("Error message:", error instanceof Error ? error.message : String(error))
+    console.error("Error stack:", error instanceof Error ? error.stack : "N/A")
+    console.error("Full error object:", error)
+    console.error("========================")
+    
     const errorMessage = error instanceof Error ? error.message : "Something went wrong"
-    res.send({ error: errorMessage, message: null, isEnd: true })
+    safeSend({ error: errorMessage, message: null, isEnd: true })
   }
 }
 
