@@ -78,14 +78,15 @@ export default function Extension() {
   return (
     <main
       ref={setExtensionContainer}
-      className={`antialiased w-full mb-3 z-10 ${extensionTheme}`}>
+      className={`antialiased w-full mb-3 z-10 ${extensionTheme}`}
+      key="youtube-ai-extension">
       <div className="w-full">
         <Collapsible
           open={extensionIsOpen}
           onOpenChange={setExtensionIsOpen}
           className="space-y-3">
           <ExtensionActions />
-          <CollapsibleContent className="w-full bg-blue-500 dark:bg-blue-700 dark:text-white h-fit max-h-[500px] border border-zinc-200 dark:border-zinc-800 rounded-md overflow-auto no-scrollbar">
+          <CollapsibleContent className="w-full bg-white dark:bg-[#0f0f0f] h-fit max-h-[500px] border border-zinc-200 dark:border-zinc-800 rounded-md overflow-auto no-scrollbar">
             <ExtensionPanels />
           </CollapsibleContent>
         </Collapsible>

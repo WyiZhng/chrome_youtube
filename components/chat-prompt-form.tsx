@@ -95,8 +95,10 @@ export default function PromptForm({ className }: PromptFormProps) {
   React.useEffect(() => {
     console.log("Use Effect That Generates Chat Called")
     console.log("Port data:", port.data)
+    
+    if (!port.data) return
 
-    if (port.data?.message !== undefined) {
+    if (port.data?.message !== undefined && port.data?.message !== null) {
       // 处理非流式响应（isEnd=true）
       if (port.data.isEnd === true) {
         console.log("Received final chat message (non-streaming):", port.data.message)
@@ -121,6 +123,7 @@ export default function PromptForm({ className }: PromptFormProps) {
         }
         
         setChatIsGenerating(false)
+        setChatIsError(false)
       } 
       // 处理流式响应（isEnd=false）
       else if (port.data.isEnd === false) {
@@ -139,11 +142,11 @@ export default function PromptForm({ className }: PromptFormProps) {
           newMessages[newMessages.length - 1].content = port.data.message
           setChatMessages(newMessages)
         }
+        
+        setChatIsError(false)
       }
     }
-
-    setChatIsError(false)
-  }, [port.data?.message])
+  }, [port.data?.message, port.data?.isEnd])
 
   // React.useEffect(() => {
   //       setChatMessages([

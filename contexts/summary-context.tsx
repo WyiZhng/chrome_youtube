@@ -87,18 +87,24 @@ export function SummaryProvider({ children }: SummaryProviderProps) {
     })
   }
 
+  // 只在视频切换时重置状态，不在 extensionLoading 变化时重置
   React.useEffect(() => {
-    setSummaryContent(null)
-    setSummaryIsGenerating(false)
-    setSummaryIsError(false)
-    setSummaryErrorMessage(null)
-  }, [extensionLoading])
+    // 当扩展真正加载新视频时才重置（而不是每次 loading 状态变化）
+    if (extensionData?.metadata?.title) {
+      setSummaryContent(null)
+      setSummaryIsGenerating(false)
+      setSummaryIsError(false)
+      setSummaryErrorMessage(null)
+    }
+  }, [extensionData?.metadata?.title])
 
   React.useEffect(() => {
     console.log("Use Effect That Streams Summary Called")
     console.log("Port data:", port.data)
     
-    if (port.data?.message !== undefined) {
+    if (!port.data) return
+    
+    if (port.data?.message !== undefined && port.data?.message !== null) {
       // 对于非流式响应（isEnd=true），也要设置内容
       if (port.data.isEnd === true) {
         console.log("Received final message (non-streaming):", port.data.message)
@@ -106,26 +112,27 @@ export function SummaryProvider({ children }: SummaryProviderProps) {
         const content = port.data.message.replace(/\nEND$/, '').replace(/END$/, '')
         setSummaryContent(content)
         setSummaryIsGenerating(false)
+        setSummaryIsError(false)
+        setSummaryErrorMessage(null)
       } else if (port.data.isEnd === false) {
         // 流式响应，持续更新
         console.log("Streaming message:", port.data.message)
         setSummaryContent(port.data.message)
+        setSummaryIsError(false)
+        setSummaryErrorMessage(null)
       }
     }
-
-    setSummaryIsError(false)
-    setSummaryErrorMessage(null)
-  }, [port.data?.message])
+  }, [port.data?.message, port.data?.isEnd])
 
   React.useEffect(() => {
     console.log("Use Effect That Streams Summary Error Called")
+    if (!port.data) return
+    
     if (port.data?.error !== undefined && port.data?.error !== null && port.data?.error !== "") {
       setSummaryIsError(true)
       setSummaryErrorMessage(port.data.error)
       setSummaryContent(null)
-    } else {
-      setSummaryIsError(false)
-      setSummaryErrorMessage(null)
+      setSummaryIsGenerating(false)
     }
   }, [port.data?.error])
 

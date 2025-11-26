@@ -12,8 +12,10 @@ interface ExtensionPanelsProps {}
 
 export default function ExtensionPanels({}: ExtensionPanelsProps) {
   const { extensionPanel } = useExtension()
-
   const openAIKey = useAtomValue(openAIKeyAtom)
+
+  // 添加 key 属性强制重新挂载组件，避免状态污染
+  const panelKey = `${extensionPanel}-panel`
 
   if (!openAIKey) {
     return (
@@ -22,11 +24,12 @@ export default function ExtensionPanels({}: ExtensionPanelsProps) {
       </div>
     )
   }
+  
   return (
-    <div>
-      {extensionPanel === "Summary" && <Summary />}
-      {extensionPanel === "Transcript" && <Transcript />}
-      {extensionPanel === "Chat" && <Chat />}
+    <div key={panelKey}>
+      {extensionPanel === "Summary" && <Summary key="summary" />}
+      {extensionPanel === "Transcript" && <Transcript key="transcript" />}
+      {extensionPanel === "Chat" && <Chat key="chat" />}
     </div>
   )
 }
